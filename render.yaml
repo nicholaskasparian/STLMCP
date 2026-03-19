@@ -1,0 +1,15 @@
+# render.yaml — Render.com deployment configuration
+# https://render.com/docs/yaml-spec
+
+services:
+  - type: web
+    name: stlmcp
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: free
+    # Render sets PORT automatically; the app reads process.env.PORT.
+    envVars:
+      - key: NODE_ENV
+        value: production
+    # Render's free tier sleeps after inactivity — healthCheckPath keeps it awake.
+    healthCheckPath: /health
