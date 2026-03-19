@@ -1,10 +1,9 @@
 # STLMCP
 
-A **no-auth MCP server** that accepts OpenSCAD source code and returns PNG renders from **16 camera angles** — giving AI assistants and other MCP clients a full 360° view of any 3D model.
+A **no-auth HTTP API** that accepts OpenSCAD source code and returns PNG renders from **16 camera angles** — giving AI assistants and other clients a full 360° view of any 3D model.
 
 ## Features
 
-- **MCP-compliant** — implements the [Model Context Protocol](https://modelcontextprotocol.io/) Streamable HTTP transport
 - **No authentication required** — drop-in, zero-config for local or cloud use
 - **16 angles per render**: top, 8 high-angle (55° tilt), 6 low-angle (75° tilt), bottom
 - **800 × 600 px PNG** output, base64-encoded in the tool response
@@ -12,37 +11,39 @@ A **no-auth MCP server** that accepts OpenSCAD source code and returns PNG rende
 
 ---
 
-## MCP Tool
+## API Endpoint
 
-### `render_openscad`
+### `POST /api/render`
 
-| Parameter | Type   | Description                      |
-|-----------|--------|----------------------------------|
-| `code`    | string | OpenSCAD (`.scad`) source code   |
+**Request body**
 
-**Returns** an array of 16 `image/png` content items (base64-encoded), one per camera angle.
+{
+  "code": "sphere(r=20, $fn=64);"
+}
 
-#### Example (Claude Desktop / MCP client config)
+**Response body**
 
 ```json
 {
-  "mcpServers": {
-    "openscad-renderer": {
-      "url": "https://your-service.onrender.com/mcp",
-      "transport": "streamable-http"
+  "images": [
+    {
+      "label": "top",
+      "mimeType": "image/png",
+      "data": "<base64>"
     }
-  }
+  ]
 }
 ```
 
-#### Example OpenSCAD prompt
+`images` contains up to 16 angle renders; at least one successful render is required.
 
-Ask the AI:
+#### cURL example
 
-> Render this OpenSCAD code:
-> ```
-> sphere(r=20, $fn=64);
-> ```
+```bash
+curl -X POST http://localhost:3000/api/render \
+  -H "content-type: application/json" \
+  -d '{"code":"sphere(r=20, $fn=64);"}'
+```
 
 ---
 
@@ -98,22 +99,18 @@ docker run -p 3000:3000 stlmcp
 ## Architecture
 
 ```
-Client (AI / MCP client)
-        │  POST /mcp   (JSON-RPC 2.0 over Streamable HTTP)
+Client (AI / API client)
+        │  POST /api/render  (JSON)
         ▼
   Node.js / Express
         │
-        ├── McpServer  (stateless, @modelcontextprotocol/sdk)
-        │       └── render_openscad tool
-        │               │
-        │               ▼
-        │         writes SCAD → tmp dir
-        │         runs openscad (×16 angles, in parallel)
-        │               │  needs Xvfb (virtual display)
-        │               ▼
-        │         reads PNG files → base64
-        │               ▼
-        └── returns 16 image content items to client
+        └── writes SCAD → tmp dir
+            runs openscad (×16 angles, in parallel)
+                  │  needs Xvfb (virtual display)
+                  ▼
+            reads PNG files → base64
+                  ▼
+            returns image array to client
 ```
 
 ## Camera angles

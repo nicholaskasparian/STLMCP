@@ -1,5 +1,3 @@
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import express, { type Request, type Response } from "express";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -126,49 +124,9 @@ async function renderOpenSCAD(scadCode: string): Promise<RenderedImage[]> {
   }
 }
 
-/** Build a fresh McpServer with the render_openscad tool registered. */
-function buildMcpServer(): McpServer {
-  const server = new McpServer({
-    name: "openscad-renderer",
-    version: "1.0.0",
-  });
-
-  server.registerTool(
-    "render_openscad",
-    {
-      title: "Render OpenSCAD",
-      description: [
-        "Render OpenSCAD source code and return PNG images from 16 camera angles.",
-        "Angles: 1 top-down view, 8 high-angle views (55° tilt, every 45°),",
-        "6 low-angle views (75° tilt, every 60°), and 1 bottom-up view.",
-        "Each image is 800×600 px, base64-encoded PNG.",
-      ].join(" "),
-      inputSchema: {
-        code: z.string().min(1).describe("OpenSCAD (.scad) source code to render"),
-      },
-    },
-    async ({ code }) => {
-      try {
-        const images = await renderOpenSCAD(code);
-        return {
-          content: images.map(({ data, mimeType }) => ({
-            type: "image" as const,
-            data,
-            mimeType,
-          })),
-        };
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        return {
-          isError: true,
-          content: [{ type: "text" as const, text: `Render error: ${message}` }],
-        };
-      }
-    },
-  );
-
-  return server;
-}
+const RenderRequestSchema = z.object({
+  code: z.string().min(1, "OpenSCAD code is required"),
+});
 
 // ---------------------------------------------------------------------------
 // Express app
@@ -182,40 +140,32 @@ app.get("/health", (_req: Request, res: Response) => {
   res.json({ status: "ok", service: "openscad-renderer", angles: CAMERA_ANGLES.length });
 });
 
-/**
- * MCP endpoint — stateless mode.
- *
- * Each POST request is fully self-contained: a new McpServer + transport pair
- * is created, the request is handled, and both are closed immediately. This
- * avoids session state so the server can be scaled horizontally or restarted
- * freely (suitable for Render's free tier).
- */
-app.post("/mcp", async (req: Request, res: Response) => {
-  const transport = new StreamableHTTPServerTransport({
-    sessionIdGenerator: undefined, // stateless — no session IDs
-  });
-  const server = buildMcpServer();
-
+/** Render API endpoint. */
+app.post("/api/render", async (req: Request, res: Response) => {
   try {
-    await server.connect(transport);
-    await transport.handleRequest(req, res, req.body);
-  } catch (err) {
-    if (!res.headersSent) {
-      res.status(500).json({
-        jsonrpc: "2.0",
-        error: { code: -32603, message: "Internal server error" },
-        id: null,
+    const parsed = RenderRequestSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({
+        error: "Invalid request body",
+        details: parsed.error.flatten(),
       });
     }
-  } finally {
-    res.on("finish", () => {
-      server.close().catch(() => {});
+
+    const images = await renderOpenSCAD(parsed.data.code);
+    return res.json({ images });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (message.includes("Server is busy")) {
+      return res.status(429).json({ error: message });
+    }
+    return res.status(500).json({
+      error: `Render error: ${message}`,
     });
   }
 });
 
 app.listen(PORT, () => {
-  console.log(`OpenSCAD MCP server listening on port ${PORT}`);
+  console.log(`OpenSCAD API server listening on port ${PORT}`);
   console.log(`  Health : http://localhost:${PORT}/health`);
-  console.log(`  MCP    : http://localhost:${PORT}/mcp  (POST)`);
+  console.log(`  API    : http://localhost:${PORT}/api/render  (POST)`);
 });
