@@ -23,7 +23,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         gnupg \
         openscad \
         xvfb \
-        libgl1-mesa-glx \
+        libgl1 \
         libglu1-mesa \
         libxrender1 \
         libxi6 \
