@@ -1,124 +1,44 @@
 # STLMCP
 
-A **no-auth HTTP API** that accepts OpenSCAD source code and returns PNG renders from **16 camera angles** — giving AI assistants and other clients a full 360° view of any 3D model.
+**An OpenSCAD rendering API for AI-assisted CAD workflows.**
 
-## Features
+Send OpenSCAD source code to an HTTP endpoint and get up to **16 PNG views** of the resulting 3D model—top, bottom, and multiple oblique angles. The output helps agents and developers inspect geometry without manually opening a CAD application.
 
-- **No authentication required** — drop-in, zero-config for local or cloud use
-- **16 angles per render**: top, 8 high-angle (55° tilt), 6 low-angle (75° tilt), bottom
-- **800 × 600 px PNG** output, base64-encoded in the tool response
-- **Free-hostable** on [Render](https://render.com) via Docker
+## How it works
 
----
+1. `POST /api/render` accepts `{ "code": "..." }`.
+2. An Express service writes the source to a temporary file and runs OpenSCAD headlessly across 16 camera angles.
+3. The endpoint returns labeled, base64-encoded **800 × 600 PNG** images.
 
-## API Endpoint
+**Engineering details:** TypeScript, Express, Zod request validation, parallel subprocess rendering, a two-request concurrency limit, per-render timeouts, automatic temporary-file cleanup, Docker, and Xvfb.
 
-### `POST /api/render`
+## Run
 
-**Request body**
+**Docker** (recommended):
 
-{
-  "code": "sphere(r=20, $fn=64);"
-}
-
-**Response body**
-
-```json
-{
-  "images": [
-    {
-      "label": "top",
-      "mimeType": "image/png",
-      "data": "<base64>"
-    }
-  ]
-}
+```bash
+docker build -t stlmcp .
+docker run --rm -p 3000:3000 stlmcp
 ```
 
-`images` contains up to 16 angle renders; at least one successful render is required.
+**Local:** requires Node.js 20+, OpenSCAD on `PATH`, and a working display (or Xvfb on headless Linux).
 
-#### cURL example
+```bash
+npm install
+npm run build
+npm start
+```
+
+Test the API:
 
 ```bash
 curl -X POST http://localhost:3000/api/render \
-  -H "content-type: application/json" \
-  -d '{"code":"sphere(r=20, $fn=64);"}'
+  -H 'Content-Type: application/json' \
+  -d '{"code":"cube([20,20,20]);"}'
 ```
 
----
+`GET /health` returns the service status and configured number of camera angles.
 
-## Running locally
+## Scope and security
 
-### Prerequisites
-
-- Node.js ≥ 20
-- [OpenSCAD](https://openscad.org/downloads.html) installed and on `PATH`
-- (Linux/macOS) `Xvfb` for headless display (install via `apt install xvfb` or `brew install --cask xquartz`)
-
-```bash
-# Install dependencies
-npm install
-
-# Build TypeScript
-npm run build
-
-# Start the server (set DISPLAY if running headlessly)
-DISPLAY=:99 npm start
-# or, with auto-reload during development:
-npm run dev
-```
-
-The server listens on `http://localhost:3000` by default.  
-Set `PORT` to override.
-
----
-
-## Deploying to Render (free tier)
-
-1. Push this repository to GitHub.
-2. Create a new **Web Service** on [render.com](https://render.com).
-3. Connect your GitHub repo; Render will detect `render.yaml` automatically.
-4. Click **Deploy** — Render builds the Docker image and starts the service.
-
-The `/health` endpoint is used as Render's health-check probe.
-
----
-
-## Docker
-
-```bash
-# Build
-docker build -t stlmcp .
-
-# Run
-docker run -p 3000:3000 stlmcp
-```
-
----
-
-## Architecture
-
-```
-Client (AI / API client)
-        │  POST /api/render  (JSON)
-        ▼
-  Node.js / Express
-        │
-        └── writes SCAD → tmp dir
-            runs openscad (×16 angles, in parallel)
-                  │  needs Xvfb (virtual display)
-                  ▼
-            reads PNG files → base64
-                  ▼
-            returns image array to client
-```
-
-## Camera angles
-
-| Group     | Count | rx (tilt) | rz (azimuth)        |
-|-----------|-------|-----------|---------------------|
-| Top       | 1     | 0°        | 0°                  |
-| High ring | 8     | 55°       | 0° … 315° (×45°)    |
-| Low ring  | 6     | 75°       | 0° … 300° (×60°)    |
-| Bottom    | 1     | 180°      | 0°                  |
-| **Total** | **16**|           |                     |
+This is a **JSON/HTTP API**, not an MCP-protocol server; an agent can call it directly or via an adapter. The current endpoint has **no authentication** and invokes a CAD renderer on submitted code. Use it in a trusted environment; add authentication, robust resource limits, and execution isolation before exposing it publicly.
